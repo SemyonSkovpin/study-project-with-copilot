@@ -9,6 +9,16 @@ HEIGHT = 100
 FPS = 60
 VMIN, VMAX = -5.0, 5.0  # Color mapping range
 
+# Modes for simulation
+MODES = [
+    ("pulse", "Pulse"),
+    ("point", "Point Source"),
+    ("wall", "Wall"),
+]
+BUTTON_WIDTH = 140
+BUTTON_HEIGHT = 40
+BUTTON_MARGIN = 10
+
 # Screen parameters (set these to your device resolution or let Pygame detect)
 SCREEN_WIDTH = 0
 SCREEN_HEIGHT = 0
@@ -32,11 +42,28 @@ def pressure_to_image(pressure: np.ndarray, scale: int) -> pygame.Surface:
         surf = pygame.transform.scale(surf, (pressure.shape[0]*scale, pressure.shape[1]*scale))
     return surf
 
+def draw_mode_buttons(screen, font, current_mode):
+    buttons = []
+    for idx, (mode_key, mode_text) in enumerate(MODES):
+        x = BUTTON_MARGIN
+        y = BUTTON_MARGIN + idx * (BUTTON_HEIGHT + BUTTON_MARGIN)
+        rect = pygame.Rect(x, y, BUTTON_WIDTH, BUTTON_HEIGHT)
+        color = (180, 120, 40) if current_mode == mode_key else (100, 80, 20)
+        pygame.draw.rect(screen, color, rect, border_radius=8)
+        text_surf = font.render(mode_text, True, (255,255,255))
+        text_rect = text_surf.get_rect(center=rect.center)
+        screen.blit(text_surf, text_rect)
+        buttons.append((rect, mode_key))
+    return buttons
+
 def main():
     global SCREEN_WIDTH, SCREEN_HEIGHT
 
     pygame.init()
     pygame.display.set_caption("Sound Simulation")
+
+    # Font for buttons
+    font = pygame.font.SysFont("arial", 24)
 
     # Get display size and scale
     info = pygame.display.Info()
@@ -64,7 +91,7 @@ def main():
     running = True
     clock = pygame.time.Clock()
     timestep = 0
-    mode = "pulse"  # Can add UI to switch modes if desired
+    mode = "pulse"
 
     while running:
         # Handle events
@@ -73,12 +100,17 @@ def main():
                 running = False
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = event.pos
-                # Map to canvas grid coordinates (x, y)
-                gx = (mx - offset_x) // scale
-                gy = (my - offset_y) // scale
-                if 0 <= gx < WIDTH and 0 <= gy < HEIGHT:
-                    # Pass (gx, gy) as (x, y) to handle_input, no swapping
-                    handle_input(canvas, gx, gy, mode)
+                # Check if mode button was clicked
+                for rect, mkey in draw_mode_buttons(screen, font, mode):
+                    if rect.collidepoint(mx, my):
+                        mode = mkey
+                        break
+                else:
+                    # Map to canvas grid coordinates (x, y)
+                    gx = (mx - offset_x) // scale
+                    gy = (my - offset_y) // scale
+                    if 0 <= gx < WIDTH and 0 <= gy < HEIGHT:
+                        handle_input(canvas, gx, gy, mode)
 
         # Step simulation
         advance_canvas(
@@ -101,6 +133,9 @@ def main():
         # Convert simulation to surface and blit centered
         surf = pressure_to_image(canvas.pressure, scale)
         screen.blit(surf, (offset_x, offset_y))
+
+        # Draw buttons (on top)
+        draw_mode_buttons(screen, font, mode)
 
         pygame.display.flip()
         clock.tick(FPS)
