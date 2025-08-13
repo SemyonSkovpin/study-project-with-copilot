@@ -110,8 +110,8 @@ def main():
                     gx = (mx - offset_x) // scale
                     gy = (my - offset_y) // scale
                     if 0 <= gx < WIDTH and 0 <= gy < HEIGHT:
-                        # FIX: DO NOT swap gx, gy; pass as-is for natural mapping
-                        handle_input(canvas, gx, gy, mode)
+                        # Swap gx and gy to fix mirrored placement
+                        handle_input(canvas, gy, gx, mode)
 
         # Step simulation
         advance_canvas(
