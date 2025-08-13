@@ -1,10 +1,13 @@
+print("hello")
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import random
 
-from sound_sim_v3.sim_core import Canvas, advance_canvas, add_persistent_source
+from sim_core import Canvas, advance_canvas, add_persistent_source
 
+print("hello")
 # Simulation parameters
 WIDTH = 100
 HEIGHT = 100
@@ -25,6 +28,7 @@ for _ in range(2):
 frames = []
 
 for t in range(TIMESTEPS):
+    print (t)
     advance_canvas(canvas, time=t)
     frames.append(canvas.pressure.T.copy())  # transpose for imshow
 
@@ -45,4 +49,5 @@ ani = animation.FuncAnimation(
 ani.save('sound_sim.mp4', writer='ffmpeg')
 ani.save('sound_sim.gif', writer='imagemagick')
 
-plt.show()
+print("done")
+#plt.show()
