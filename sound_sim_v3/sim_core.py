@@ -1,9 +1,10 @@
 import numpy as np
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 class Canvas:
     """
     Holds the state of the simulation: pressure fields and persistent sound sources.
+    Arrays are shaped (width, height) for consistency with existing code.
     """
     def __init__(self, width: int, height: int):
         self.width = width
@@ -53,38 +54,75 @@ def handle_input(canvas: Canvas, x: int, y: int, mode: str):
         raise ValueError(f"Unknown mode: {mode}")
 
 
-def advance_canvas(canvas: Canvas, sound_speed: float = 1.7, damping: float = 0.998, time: float = 0.0):
+def advance_canvas(
+    canvas: Canvas,
+    sound_speed: float = 0.5,          # Lower default for stability
+    damping: float = 0.998,
+    time: float = 0.0,                 # Simulation step index or time units
+    dt: float = 0.2,                   # Time step size
+    dx: float = 1.0,                   # Grid spacing x
+    dy: float = 1.0,                   # Grid spacing y
+    source_amp: float = 1.0,           # Amplitude of sinusoidal sources
+    source_freq: float = 0.05,         # Frequency (cycles per unit time)
+    clip: Optional[float] = 100.0,     # Clip magnitude to avoid overflow; set None to disable
+    boundary: str = "periodic",        # "periodic" or "fixed"
+):
     """
-    Advance the simulation by one timestep using the 2D wave equation.
-    - sound_speed: Controls how fast waves propagate.
-    - damping: <1.0 damps the wave energy over time.
-    - time: Simulation time, used for persistent source phase.
+    Advance the simulation by one timestep using a stable 2D wave equation scheme.
+
+    Discretization (leapfrog):
+      P_next = 2P - P_prev + (c^2 * dt^2) * Laplacian(P)
+      P_next *= damping
+
+    Stability (CFL) condition for 2D with dx=dy:
+      (c * dt / dx) <= 1 / sqrt(2)
+    Defaults chosen to satisfy this.
+
+    boundary:
+      - "periodic": wrap with np.roll (torus)
+      - "fixed": zero Dirichlet boundary after update (absorbing-ish)
     """
     P = canvas.pressure
     P_prev = canvas.prev_pressure
 
-    # Compute Laplacian with np.roll for periodic neighbors (set boundary below)
-    laplacian = (
-        np.roll(P, 1, axis=0) + np.roll(P, -1, axis=0) +
-        np.roll(P, 1, axis=1) + np.roll(P, -1, axis=1) -
-        4 * P
-    )
+    # Laplacian with periodic neighbors
+    lap_x = (np.roll(P, 1, axis=0) - 2.0 * P + np.roll(P, -1, axis=0)) / (dx * dx)
+    lap_y = (np.roll(P, 1, axis=1) - 2.0 * P + np.roll(P, -1, axis=1)) / (dy * dy)
+    laplacian = lap_x + lap_y
 
-    # Leapfrog update for wave equation
-    P_next = (2 * P - P_prev + (sound_speed ** 2) * laplacian) * damping
+    coeff = (sound_speed * dt) ** 2  # c^2 * dt^2
 
-    # Add persistent sources (sinusoidal)
-    freq = 0.05  # Tweak as desired
-    for (sx, sy) in canvas.persistent_sources:
-        if 0 <= sx < canvas.width and 0 <= sy < canvas.height:
-            P_next[sx, sy] += 1.2 * np.sin(time * freq)
+    # Leapfrog update
+    P_next = (2.0 * P - P_prev) + coeff * laplacian
 
-    # Zero Dirichlet boundary conditions
-    P_next[0, :] = 0
-    P_next[-1, :] = 0
-    P_next[:, 0] = 0
-    P_next[:, -1] = 0
+    # Add persistent sources (sinusoidal, using continuous time t = time * dt)
+    t_cont = time * dt
+    if canvas.persistent_sources and source_amp != 0.0:
+        s_val = source_amp * np.sin(2.0 * np.pi * source_freq * t_cont)
+        for (sx, sy) in canvas.persistent_sources:
+            if 0 <= sx < canvas.width and 0 <= sy < canvas.height:
+                P_next[sx, sy] += s_val
 
-    # Swap for next step
-    canvas.prev_pressure = P.copy()
-    canvas.pressure = P_next
+    # Damping
+    if damping != 1.0:
+        P_next *= damping
+
+    # Boundary conditions
+    if boundary == "fixed":
+        P_next[0, :] = 0.0
+        P_next[-1, :] = 0.0
+        P_next[:, 0] = 0.0
+        P_next[:, -1] = 0.0
+    # else: "periodic" already applied via np.roll
+
+    # Numerical safety: replace NaN/Inf and clip
+    if clip is not None:
+        # Use nan_to_num with bounds; if clip is small, this also bounds infs.
+        np.nan_to_num(P_next, copy=False, nan=0.0, posinf=clip, neginf=-clip)
+        np.clip(P_next, -clip, clip, out=P_next)
+    else:
+        np.nan_to_num(P_next, copy=False, nan=0.0)
+
+    # Rotate buffers
+    canvas.prev_pressure[:, :] = P
+    canvas.pressure[:, :] = P_next

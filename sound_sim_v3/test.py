@@ -1,107 +1,75 @@
-import pygame
-import random
 import numpy as np
-from sim_core import Canvas, advance_canvas, add_persistent_source
-
+import random
 import imageio
+
+from sound_sim_v3.sim_core import Canvas, advance_canvas, add_persistent_source
 
 # Simulation parameters
 WIDTH = 100
 HEIGHT = 100
 TIMESTEPS = 1000
-SCALE = 5  # Each simulation cell will be SCALE x SCALE pixels
-FPS = 60
+SCALE = 5               # Each simulation cell will be SCALE x SCALE pixels
+FPS = 30                # Playback speed for GIF
+VMIN, VMAX = -5.0, 5.0  # Color mapping range
 
-def pressure_to_color(p, vmin=-5, vmax=5):
-    """Map pressure value to RGB color."""
-    norm = (p - vmin) / (vmax - vmin)
-    norm = np.clip(norm, 0, 1)
-    # Blue (low) -> White (mid) -> Red (high)
-    return (
-        int(255 * norm),                       # R
-        int(255 * (1 - abs(norm - 0.5) * 2)),  # G (white at center)
-        int(255 * (1 - norm))                  # B
-    )
+def pressure_to_image(pressure: np.ndarray) -> np.ndarray:
+    """
+    Convert pressure array (shape [W, H]) to an RGB image (H, W, 3) uint8.
+    Vectorized (no Python loops) and upscaled by SCALE.
+    """
+    # pressure is shaped (W, H); convert to normalized [0,1] safely
+    denom = (VMAX - VMIN) if (VMAX - VMIN) != 0 else 1e-6
+    norm = (pressure - VMIN) / denom
+    norm = np.clip(norm, 0.0, 1.0)
 
-def draw_canvas(surface, pressure):
-    arr_min, arr_max = pressure.min(), pressure.max()
-    if arr_max - arr_min < 1e-5:
-        arr_max = arr_min + 1e-5
-    for x in range(WIDTH):
-        for y in range(HEIGHT):
-            color = pressure_to_color(pressure[x, y], vmin=-5, vmax=5)
-            rect = pygame.Rect(x * SCALE, y * SCALE, SCALE, SCALE)
-            surface.fill(color, rect)
+    # Build color channels: Blue(low) -> White(mid) -> Red(high)
+    R = (255.0 * norm).astype(np.uint8)
+    G = (255.0 * (1.0 - np.abs(norm - 0.5) * 2.0)).astype(np.uint8)
+    B = (255.0 * (1.0 - norm)).astype(np.uint8)
 
-def run_and_capture_simulation():
+    img = np.stack([R, G, B], axis=-1)            # (W, H, 3)
+    img = np.transpose(img, (1, 0, 2))            # (H, W, 3)
+
+    if SCALE > 1:
+        img = np.repeat(np.repeat(img, SCALE, axis=0), SCALE, axis=1)
+    return img
+
+def main():
+    # Initialize canvas
     canvas = Canvas(WIDTH, HEIGHT)
 
     # Place two persistent sources at random locations
-    source_coords = []
+    rng = np.random.default_rng()
+    sources = []
     for _ in range(2):
-        x = random.randint(0, WIDTH - 1)
-        y = random.randint(0, HEIGHT - 1)
+        x = int(rng.integers(0, WIDTH))
+        y = int(rng.integers(0, HEIGHT))
         add_persistent_source(canvas, x, y)
-        source_coords.append((x, y))
-    print("Sound sources at:", source_coords)
+        sources.append((x, y))
+    print("Sources at:", sources)
 
-    # Prepare to capture frames as numpy arrays for GIF
-    frames = []
-    for timestep in range(TIMESTEPS):
-        advance_canvas(canvas, time=timestep)
-        # Convert pressure to RGB image (H x W x 3, uint8)
-        arr_min, arr_max = canvas.pressure.min(), canvas.pressure.max()
-        if arr_max - arr_min < 1e-5:
-            arr_max = arr_min + 1e-5
-        norm = (canvas.pressure - arr_min) / (arr_max - arr_min)
-        image = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
-        for x in range(WIDTH):
-            for y in range(HEIGHT):
-                image[y, x] = pressure_to_color(canvas.pressure[x, y], vmin=-5, vmax=5)
-        # Upscale for visibility
-        if SCALE > 1:
-            image = np.kron(image, np.ones((SCALE, SCALE, 1), dtype=np.uint8))
-        frames.append(image)
-    return frames
+    # Stream frames directly to GIF to avoid high RAM usage
+    with imageio.get_writer("sound_sim.gif", mode="I", duration=1.0 / FPS) as writer:
+        for t in range(TIMESTEPS):
+            # Use stable parameters; you can tweak sound_speed/dt/damping
+            advance_canvas(
+                canvas,
+                sound_speed=0.5,   # must satisfy c*dt/dx <= 1/sqrt(2) with defaults dt=0.2, dx=1
+                damping=0.998,
+                time=t,
+                dt=0.2,
+                dx=1.0,
+                dy=1.0,
+                source_amp=1.0,
+                source_freq=0.05,
+                clip=50.0,
+                boundary="periodic",
+            )
 
-def main():
-    pygame.init()
-    screen = pygame.display.set_mode((WIDTH * SCALE, HEIGHT * SCALE))
-    pygame.display.set_caption("Sound Simulation (Pygame)")
-    clock = pygame.time.Clock()
+            frame = pressure_to_image(canvas.pressure)
+            writer.append_data(frame)
 
-    # --- Run simulation and capture all frames ---
-    print("Running simulation and capturing frames...")
-    frames = run_and_capture_simulation()
-    print("Simulation done. Starting animation.")
-
-    # --- Play animation in pygame ---
-    running = True
-    frame_idx = 0
-    total_frames = len(frames)
-    while running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-        # Display current frame
-        surf = pygame.surfarray.make_surface(np.transpose(frames[frame_idx], (1, 0, 2)))
-        screen.blit(surf, (0, 0))
-        pygame.display.flip()
-        clock.tick(FPS)
-        frame_idx += 1
-        if frame_idx >= total_frames:
-            frame_idx = 0  # Loop the animation
-
-    # --- Save last frame as PNG ---
-    pygame.image.save(screen, "sound_sim_final.png")
-    print("Last frame saved as sound_sim_final.png.")
-
-    # --- Save GIF animation ---
-    print("Saving animation to sound_sim.gif ...")
-    imageio.mimsave("sound_sim.gif", frames, duration=1/FPS)
-    print("Animation saved as sound_sim.gif.")
-
-    pygame.quit()
+    print("GIF saved as sound_sim.gif")
 
 if __name__ == "__main__":
     main()
