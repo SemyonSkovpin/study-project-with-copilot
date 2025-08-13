@@ -12,8 +12,8 @@ VMIN, VMAX = -5.0, 5.0  # Color mapping range
 # Modes for simulation
 MODES = [
     ("pulse", "Pulse"),
-    ("point", "Point Source"),
-    ("wall", "Wall"),
+    ("consistent", "Consistent"),
+    ("remove", "Remove"),
 ]
 BUTTON_WIDTH = 140
 BUTTON_HEIGHT = 40
@@ -110,6 +110,7 @@ def main():
                     gx = (mx - offset_x) // scale
                     gy = (my - offset_y) // scale
                     if 0 <= gx < WIDTH and 0 <= gy < HEIGHT:
+                        # FIX: DO NOT swap gx, gy; pass as-is for natural mapping
                         handle_input(canvas, gx, gy, mode)
 
         # Step simulation
