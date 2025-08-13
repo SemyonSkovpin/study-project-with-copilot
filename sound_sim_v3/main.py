@@ -83,11 +83,7 @@ def main():
     # Simulation setup
     canvas = Canvas(WIDTH, HEIGHT)
     rng = np.random.default_rng()
-    for _ in range(2):
-        x = int(rng.integers(0, WIDTH))
-        y = int(rng.integers(0, HEIGHT))
-        add_persistent_source(canvas, x, y)
-
+    
     running = True
     clock = pygame.time.Clock()
     timestep = 0
