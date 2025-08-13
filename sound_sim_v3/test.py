@@ -1,53 +1,107 @@
-print("hello")
-
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
+import pygame
 import random
-
+import numpy as np
 from sim_core import Canvas, advance_canvas, add_persistent_source
 
-print("hello")
+import imageio
+
 # Simulation parameters
 WIDTH = 100
 HEIGHT = 100
 TIMESTEPS = 1000
+SCALE = 5  # Each simulation cell will be SCALE x SCALE pixels
+FPS = 60
 
-# Initialize canvas
-canvas = Canvas(WIDTH, HEIGHT)
+def pressure_to_color(p, vmin=-5, vmax=5):
+    """Map pressure value to RGB color."""
+    norm = (p - vmin) / (vmax - vmin)
+    norm = np.clip(norm, 0, 1)
+    # Blue (low) -> White (mid) -> Red (high)
+    return (
+        int(255 * norm),                       # R
+        int(255 * (1 - abs(norm - 0.5) * 2)),  # G (white at center)
+        int(255 * (1 - norm))                  # B
+    )
 
-# Place two persistent sources at random locations
-source_coords = []
-for _ in range(2):
-    x = random.randint(0, WIDTH - 1)
-    y = random.randint(0, HEIGHT - 1)
-    add_persistent_source(canvas, x, y)
-    source_coords.append((x, y))
+def draw_canvas(surface, pressure):
+    arr_min, arr_max = pressure.min(), pressure.max()
+    if arr_max - arr_min < 1e-5:
+        arr_max = arr_min + 1e-5
+    for x in range(WIDTH):
+        for y in range(HEIGHT):
+            color = pressure_to_color(pressure[x, y], vmin=-5, vmax=5)
+            rect = pygame.Rect(x * SCALE, y * SCALE, SCALE, SCALE)
+            surface.fill(color, rect)
 
-# Prepare to collect frames for animation
-frames = []
+def run_and_capture_simulation():
+    canvas = Canvas(WIDTH, HEIGHT)
 
-for t in range(TIMESTEPS):
-    print (t)
-    advance_canvas(canvas, time=t)
-    frames.append(canvas.pressure.T.copy())  # transpose for imshow
+    # Place two persistent sources at random locations
+    source_coords = []
+    for _ in range(2):
+        x = random.randint(0, WIDTH - 1)
+        y = random.randint(0, HEIGHT - 1)
+        add_persistent_source(canvas, x, y)
+        source_coords.append((x, y))
+    print("Sound sources at:", source_coords)
 
-# Set up animation with matplotlib
-fig, ax = plt.subplots()
-im = ax.imshow(frames[0], cmap='RdBu', vmin=-5, vmax=5, animated=True)
-ax.set_title("2D Sound Simulation\nSources: {}".format(source_coords))
+    # Prepare to capture frames as numpy arrays for GIF
+    frames = []
+    for timestep in range(TIMESTEPS):
+        advance_canvas(canvas, time=timestep)
+        # Convert pressure to RGB image (H x W x 3, uint8)
+        arr_min, arr_max = canvas.pressure.min(), canvas.pressure.max()
+        if arr_max - arr_min < 1e-5:
+            arr_max = arr_min + 1e-5
+        norm = (canvas.pressure - arr_min) / (arr_max - arr_min)
+        image = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
+        for x in range(WIDTH):
+            for y in range(HEIGHT):
+                image[y, x] = pressure_to_color(canvas.pressure[x, y], vmin=-5, vmax=5)
+        # Upscale for visibility
+        if SCALE > 1:
+            image = np.kron(image, np.ones((SCALE, SCALE, 1), dtype=np.uint8))
+        frames.append(image)
+    return frames
 
-def update(frame):
-    im.set_data(frame)
-    return [im]
+def main():
+    pygame.init()
+    screen = pygame.display.set_mode((WIDTH * SCALE, HEIGHT * SCALE))
+    pygame.display.set_caption("Sound Simulation (Pygame)")
+    clock = pygame.time.Clock()
 
-ani = animation.FuncAnimation(
-    fig, update, frames=frames, interval=30, blit=True, repeat=False
-)
+    # --- Run simulation and capture all frames ---
+    print("Running simulation and capturing frames...")
+    frames = run_and_capture_simulation()
+    print("Simulation done. Starting animation.")
 
-# Save animation as mp4 (requires ffmpeg) and gif (requires imagemagick)
-ani.save('sound_sim.mp4', writer='ffmpeg')
-ani.save('sound_sim.gif', writer='imagemagick')
+    # --- Play animation in pygame ---
+    running = True
+    frame_idx = 0
+    total_frames = len(frames)
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+        # Display current frame
+        surf = pygame.surfarray.make_surface(np.transpose(frames[frame_idx], (1, 0, 2)))
+        screen.blit(surf, (0, 0))
+        pygame.display.flip()
+        clock.tick(FPS)
+        frame_idx += 1
+        if frame_idx >= total_frames:
+            frame_idx = 0  # Loop the animation
 
-print("done")
-#plt.show()
+    # --- Save last frame as PNG ---
+    pygame.image.save(screen, "sound_sim_final.png")
+    print("Last frame saved as sound_sim_final.png.")
+
+    # --- Save GIF animation ---
+    print("Saving animation to sound_sim.gif ...")
+    imageio.mimsave("sound_sim.gif", frames, duration=1/FPS)
+    print("Animation saved as sound_sim.gif.")
+
+    pygame.quit()
+
+if __name__ == "__main__":
+    main()
