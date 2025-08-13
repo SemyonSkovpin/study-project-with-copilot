@@ -1,6 +1,6 @@
 import pygame
 import sys
-from sound_sim_v3.sim_core import Canvas, advance_canvas, handle_input
+from sim_core import Canvas, advance_canvas, handle_input
 
 CANVAS_WIDTH = 320
 CANVAS_HEIGHT = 240
