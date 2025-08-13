@@ -1,0 +1,10 @@
+body {
+  font-family: Arial, sans-serif;
+  text-align: center;
+  background: #f6f6f6;
+}
+#simCanvas {
+  border: 2px solid #333;
+  background: #fff;
+  touch-action: none;
+}
