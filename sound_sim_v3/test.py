@@ -2,7 +2,7 @@ import numpy as np
 import random
 import imageio
 
-from sound_sim_v3.sim_core import Canvas, advance_canvas, add_persistent_source
+from sim_core import Canvas, advance_canvas, add_persistent_source
 
 # Simulation parameters
 WIDTH = 100
