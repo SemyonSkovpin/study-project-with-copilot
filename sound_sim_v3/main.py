@@ -1,134 +1,111 @@
 import pygame
-import sys
-from sim_core import Canvas, advance_canvas, handle_input
+import numpy as np
+import random
+from sim_core import Canvas, advance_canvas, add_persistent_source, handle_input
 
-CANVAS_WIDTH = 320
-CANVAS_HEIGHT = 240
+# Simulation parameters
+WIDTH = 100
+HEIGHT = 100
+FPS = 60
+VMIN, VMAX = -5.0, 5.0  # Color mapping range
 
-MODES = ["pulse", "consistent", "remove"]
-BUTTON_HEIGHT = 60   # Height of the button row
+# Screen parameters (set these to your device resolution or let Pygame detect)
+SCREEN_WIDTH = 0
+SCREEN_HEIGHT = 0
 
-def map_screen_to_canvas(touch_x, touch_y, display_width, display_height, canvas_width, canvas_height):
-    scale = min(display_width / canvas_width, (display_height - BUTTON_HEIGHT) / canvas_height)
-    scaled_width = int(canvas_width * scale)
-    scaled_height = int(canvas_height * scale)
-    x_offset = (display_width - scaled_width) // 2
-    y_offset = (display_height - BUTTON_HEIGHT - scaled_height) // 2
+def pressure_to_image(pressure: np.ndarray, scale: int) -> pygame.Surface:
+    """
+    Convert pressure array (WIDTH, HEIGHT) to a Pygame Surface with correct color mapping and scaling.
+    """
+    denom = (VMAX - VMIN) if (VMAX - VMIN) != 0 else 1e-6
+    norm = (pressure - VMIN) / denom
+    norm = np.clip(norm, 0.0, 1.0)
 
-    if (x_offset <= touch_x < x_offset + scaled_width and
-        y_offset <= touch_y < y_offset + scaled_height):
-        canvas_x = int((touch_x - x_offset) / scale)
-        canvas_y = int((touch_y - y_offset) / scale)
-        return (canvas_x, canvas_y)
-    else:
-        return None
+    R = (255.0 * norm).astype(np.uint8)
+    G = (255.0 * (1.0 - np.abs(norm - 0.5) * 2.0)).astype(np.uint8)
+    B = (255.0 * (1.0 - norm)).astype(np.uint8)
+    img = np.stack([R, G, B], axis=-1)      # (WIDTH, HEIGHT, 3)
+    img = np.transpose(img, (1, 0, 2))      # (HEIGHT, WIDTH, 3) for Pygame
 
-def get_button_rects(display_width, display_height):
-    btn_width = display_width // 3
-    rects = []
-    for i in range(3):
-        rect = pygame.Rect(i * btn_width, display_height - BUTTON_HEIGHT, btn_width, BUTTON_HEIGHT)
-        rects.append(rect)
-    return rects
-
-def render_canvas(surface, canvas):
-    array = canvas.pressure
-    arr_min, arr_max = array.min(), array.max()
-    if arr_max - arr_min < 1e-5:
-        arr_max = arr_min + 1e-5
-    norm = (array - arr_min) / (arr_max - arr_min)
-    img = (norm * 255).astype('uint8')
-    rgb_img = pygame.surfarray.make_surface(
-        img.repeat(3).reshape((canvas.width, canvas.height, 3)).swapaxes(0, 1)
-    )
-    surface.blit(rgb_img, (0, 0))
-
-def draw_buttons(screen, mode, font):
-    display_width, display_height = screen.get_size()
-    rects = get_button_rects(display_width, display_height)
-    colors = [(150,200,255), (180,255,180), (255,200,200)]
-    active_colors = [(30,90,200), (40,140,40), (180,40,40)]
-    for i, rect in enumerate(rects):
-        color = active_colors[i] if MODES[i] == mode else colors[i]
-        pygame.draw.rect(screen, color, rect)
-        label = font.render(MODES[i].capitalize(), True, (0,0,0))
-        label_rect = label.get_rect(center=rect.center)
-        screen.blit(label, label_rect)
-    return rects
+    surf = pygame.surfarray.make_surface(img)
+    if scale != 1:
+        surf = pygame.transform.scale(surf, (pressure.shape[0]*scale, pressure.shape[1]*scale))
+    return surf
 
 def main():
+    global SCREEN_WIDTH, SCREEN_HEIGHT
+
     pygame.init()
     pygame.display.set_caption("Sound Simulation")
-    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-    font = pygame.font.SysFont(None, 36)
+
+    # Get display size and scale
+    info = pygame.display.Info()
+    SCREEN_WIDTH = info.current_w
+    SCREEN_HEIGHT = info.current_h
+
+    # Calculate scale so canvas fills width
+    scale = SCREEN_WIDTH // WIDTH
+    canvas_pix_width = WIDTH * scale
+    canvas_pix_height = HEIGHT * scale
+    offset_x = (SCREEN_WIDTH - canvas_pix_width) // 2
+    offset_y = (SCREEN_HEIGHT - canvas_pix_height) // 2
+
+    # Set up screen
+    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+
+    # Simulation setup
+    canvas = Canvas(WIDTH, HEIGHT)
+    rng = np.random.default_rng()
+    for _ in range(2):
+        x = int(rng.integers(0, WIDTH))
+        y = int(rng.integers(0, HEIGHT))
+        add_persistent_source(canvas, x, y)
+
+    running = True
     clock = pygame.time.Clock()
+    timestep = 0
+    mode = "pulse"  # Can add UI to switch modes if desired
 
-    canvas = Canvas(CANVAS_WIDTH, CANVAS_HEIGHT)
-    sim_time = 0.0
-    mode = "pulse"
-    canvas_surface = pygame.Surface((CANVAS_WIDTH, CANVAS_HEIGHT))
-
-    while True:
-        display_width, display_height = screen.get_size()
-        scale = min(display_width / CANVAS_WIDTH, (display_height - BUTTON_HEIGHT) / CANVAS_HEIGHT)
-        scaled_width = int(CANVAS_WIDTH * scale)
-        scaled_height = int(CANVAS_HEIGHT * scale)
-        x_offset = (display_width - scaled_width) // 2
-        y_offset = (display_height - BUTTON_HEIGHT - scaled_height) // 2
-
-        button_rects = get_button_rects(display_width, display_height)
-
+    while running:
+        # Handle events
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-            if event.type in (pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN):
-                if event.type == pygame.FINGERDOWN:
-                    tx = int(event.x * display_width)
-                    ty = int(event.y * display_height)
-                else:
-                    tx, ty = event.pos
+                running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                mx, my = event.pos
+                # Map to canvas grid coordinates (x, y)
+                gx = (mx - offset_x) // scale
+                gy = (my - offset_y) // scale
+                if 0 <= gx < WIDTH and 0 <= gy < HEIGHT:
+                    # Pass (gx, gy) as (x, y) to handle_input, no swapping
+                    handle_input(canvas, gx, gy, mode)
 
-                # Check if a button was pressed
-                for i, rect in enumerate(button_rects):
-                    if rect.collidepoint(tx, ty):
-                        mode = MODES[i]
-                        break
-                else:
-                    mapped = map_screen_to_canvas(
-                        tx, ty,
-                        display_width, display_height,
-                        CANVAS_WIDTH, CANVAS_HEIGHT
-                    )
-                    if mapped:
-                        x, y = mapped
-                        handle_input(canvas, x, y, mode)
+        # Step simulation
+        advance_canvas(
+            canvas,
+            sound_speed=0.5,
+            damping=0.998,
+            time=timestep,
+            dt=0.2,
+            dx=1.0,
+            dy=1.0,
+            source_amp=1.0,
+            source_freq=0.05,
+            clip=50.0,
+            boundary="periodic",
+        )
+        timestep += 1
 
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_1:
-                    mode = "pulse"
-                elif event.key == pygame.K_2:
-                    mode = "consistent"
-                elif event.key == pygame.K_3:
-                    mode = "remove"
-                elif event.key == pygame.K_ESCAPE:
-                    pygame.quit()
-                    sys.exit()
+        # Draw background
+        screen.fill((30, 15, 0))
+        # Convert simulation to surface and blit centered
+        surf = pressure_to_image(canvas.pressure, scale)
+        screen.blit(surf, (offset_x, offset_y))
 
-        advance_canvas(canvas, time=sim_time)
-        sim_time += 1.0
-
-        render_canvas(canvas_surface, canvas)
-
-        # Draw scaled simulation
-        scaled_surf = pygame.transform.smoothscale(canvas_surface, (scaled_width, scaled_height))
-        screen.fill((0, 0, 0))
-        screen.blit(scaled_surf, (x_offset, y_offset))
-
-        # Draw buttons at the bottom
-        draw_buttons(screen, mode, font)
         pygame.display.flip()
-        clock.tick(60)
+        clock.tick(FPS)
+
+    pygame.quit()
 
 if __name__ == "__main__":
     main()
