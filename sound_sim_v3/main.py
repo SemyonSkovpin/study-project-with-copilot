@@ -121,7 +121,7 @@ def main():
             source_amp=1.0,
             source_freq=0.05,
             clip=50.0,
-            boundary="periodic",
+            boundary="reflective",
         )
         timestep += 1
 

@@ -14,18 +14,15 @@ class Canvas:
         # List of (x, y) tuples of persistent sources
         self.persistent_sources: List[Tuple[int, int]] = []
 
-
 def add_pulse(canvas: Canvas, x: int, y: int, amplitude: float = 5.0):
     """Apply a single pressure impulse at (x, y)."""
     if 0 <= x < canvas.width and 0 <= y < canvas.height:
         canvas.pressure[x, y] += amplitude
 
-
 def add_persistent_source(canvas: Canvas, x: int, y: int):
     """Add a persistent sound source at (x, y) if not already present."""
     if (x, y) not in canvas.persistent_sources:
         canvas.persistent_sources.append((x, y))
-
 
 def remove_persistent_source(canvas: Canvas, x: int, y: int, radius: int = 2):
     """Remove the nearest persistent source to (x, y) within a given radius."""
@@ -35,7 +32,6 @@ def remove_persistent_source(canvas: Canvas, x: int, y: int, radius: int = 2):
     imin = int(np.argmin(dists))
     if dists[imin] <= radius:
         canvas.persistent_sources.pop(imin)
-
 
 def handle_input(canvas: Canvas, x: int, y: int, mode: str):
     """
@@ -53,7 +49,6 @@ def handle_input(canvas: Canvas, x: int, y: int, mode: str):
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
-
 def advance_canvas(
     canvas: Canvas,
     sound_speed: float = 0.5,          # Lower default for stability
@@ -65,12 +60,13 @@ def advance_canvas(
     source_amp: float = 1.0,           # Amplitude of sinusoidal sources
     source_freq: float = 0.05,         # Frequency (cycles per unit time)
     clip: Optional[float] = 100.0,     # Clip magnitude to avoid overflow; set None to disable
-    boundary: str = "periodic",        # "periodic" or "fixed"
+    boundary: str = "reflective",      # "reflective" (default), "periodic", or "fixed"
 ):
     """
     Advance the simulation by one timestep using a stable 2D wave equation scheme.
 
     Discretization (leapfrog):
+
       P_next = 2P - P_prev + (c^2 * dt^2) * Laplacian(P)
       P_next *= damping
 
@@ -81,14 +77,26 @@ def advance_canvas(
     boundary:
       - "periodic": wrap with np.roll (torus)
       - "fixed": zero Dirichlet boundary after update (absorbing-ish)
+      - "reflective": Neumann/mirrored boundary after update (reflective wall, default)
     """
     P = canvas.pressure
     P_prev = canvas.prev_pressure
 
-    # Laplacian with periodic neighbors
-    lap_x = (np.roll(P, 1, axis=0) - 2.0 * P + np.roll(P, -1, axis=0)) / (dx * dx)
-    lap_y = (np.roll(P, 1, axis=1) - 2.0 * P + np.roll(P, -1, axis=1)) / (dy * dy)
-    laplacian = lap_x + lap_y
+    # 8-neighbor Laplacian (9-point stencil, Moore neighborhood)
+    # Weights: adjacent: 1, diagonals: 1, center: -8
+    # Normalization: 1/3 for isotropy
+
+    lap = (
+        np.roll(P,  1, axis=0) + np.roll(P, -1, axis=0) +  # up, down
+        np.roll(P,  1, axis=1) + np.roll(P, -1, axis=1) +  # left, right
+        np.roll(np.roll(P,  1, axis=0),  1, axis=1) +      # up-left
+        np.roll(np.roll(P,  1, axis=0), -1, axis=1) +      # up-right
+        np.roll(np.roll(P, -1, axis=0),  1, axis=1) +      # down-left
+        np.roll(np.roll(P, -1, axis=0), -1, axis=1)        # down-right
+        - 8.0 * P
+    ) / (3.0 * dx * dx)
+
+    laplacian = lap
 
     coeff = (sound_speed * dt) ** 2  # c^2 * dt^2
 
@@ -113,6 +121,14 @@ def advance_canvas(
         P_next[-1, :] = 0.0
         P_next[:, 0] = 0.0
         P_next[:, -1] = 0.0
+    elif boundary == "reflective":
+        # Neumann: mirror the edge values
+        # Top and bottom
+        P_next[0, :] = P_next[1, :]
+        P_next[-1, :] = P_next[-2, :]
+        # Left and right
+        P_next[:, 0] = P_next[:, 1]
+        P_next[:, -1] = P_next[:, -2]
     # else: "periodic" already applied via np.roll
 
     # Numerical safety: replace NaN/Inf and clip
